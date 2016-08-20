@@ -6,13 +6,14 @@
  * Time: 5:38 PM
  */
 
+//Default config
 const DEFAULT_COLUMNS = "user ID,user age"; //Layout of the CSV
 const DEFAULT_GROUP_BY = "user age";
+const DEFAULT_OUTPUT_FORMAT = "csv"; //csv|text|json
 
-const DEFAULT_OUTPUT_FORMAT = "text"; //text|json
-
-$inputFile = false;
-$outputFile = false;
+//Setup our variables
+$inputFilePath = false;
+$outputFilePath = false;
 $fileHasHeaderRow = false;
 $columnString = DEFAULT_COLUMNS;
 $groupBy = DEFAULT_GROUP_BY;
@@ -25,27 +26,35 @@ array_shift($argv); //Discard script name
 while ($arg = array_shift($argv)) {
 	switch ($arg) {
 
+		//Input file path
 		case '-i':
-			$inputFile = array_shift($argv);
-			if (!file_exists($inputFile)) {
-				echo "Input file $inputFile does not exist.";
+			$inputFilePath = array_shift($argv);
+			if (!file_exists($inputFilePath)) {
+				echo "Input file $inputFilePath does not exist.";
 				Quit();
 			}
 			break;
 
+		//Output file path
 		case '-o':
-			$outputFile = array_shift($argv);
-			$lastChar = substr($outputFile, strlen($outputFile) - 1, 1);
-			if (!file_exists(dirname($outputFile))) {
-				echo "Output directory $outputFile does not exist.";
+			$outputFilePath = array_shift($argv);
+
+			//Does the directory exist?
+			$lastChar = substr($outputFilePath, strlen($outputFilePath) - 1, 1);
+			if (!file_exists(dirname($outputFilePath))) {
+				echo "Output directory $outputFilePath does not exist.";
 				Quit();
 			}
+
+			//Does it point to a directory?  We can't write to a directory.
 			if ($lastChar == "\\" || $lastChar == "/") {
 				echo "Output file cannot be a directory";
 				Quit();
 			}
-			if (file_exists($outputFile)) {
-				echo "File $outputFile already exists.  Overwrite? y/N: ";
+
+			//Does the file already exist?  Overwrite?
+			if (file_exists($outputFilePath)) {
+				echo "File $outputFilePath already exists.  Overwrite? y/N: ";
 				$handle = fopen("php://stdin", "r");
 				$line = strtolower(trim(fgets($handle)));
 				if ($line != 'y') {
@@ -55,14 +64,17 @@ while ($arg = array_shift($argv)) {
 			}
 			break;
 
+		//File contains header in first row
 		case '-h':
 			$fileHasHeaderRow = true;
 			break;
 
+		//Force custom column string
 		case '-c':
 			$columnString = array_shift($argv);
 			break;
 
+		//Designate group-by column
 		case '-g':
 			$groupBy = trim(array_shift($argv));
 			break;
@@ -71,6 +83,7 @@ while ($arg = array_shift($argv)) {
 			$ignoreBadRows = true;
 			break;
 
+		//Desired output format
 		case '-f':
 			$format = strtolower(array_shift($argv));
 			switch ($format) {
@@ -87,22 +100,7 @@ while ($arg = array_shift($argv)) {
 			break;
 
 		case '--help':
-			echo "\r\nUsage: php gt.php [OPTIONS] -i INPUTFILE -g GROUPBY\r\n";
-			echo "  REQUIRED:\r\n";
-			echo "      -i INPUTFILE        Path to the input file\r\n";
-			echo "  OPTIONAL:\r\n";
-			echo "      -c COLUMNS          Comma separated columns\r\n";
-			echo "                              (Default \"user ID, user age\")\r\n";
-			echo "      -g GROUPBY          Title of the 'group by' column\r\n";
-			echo "                              (Default \"user age\")\r\n";
-			echo "      -o                  Path to the output file\r\n";
-			echo "                              (Default will print to stdout)\r\n";
-			echo "      -h                  Header of CSV contains column names\r\n";
-			echo "                               (Default off)\r\n";
-			echo "      -b                  Ignore bad lines in the CSV\r\n";
-			echo "                               (Default off)\r\n";
-			echo "      -f text|csv|json    Output format\r\n";
-			echo "                               (Default text)\r\n";
+			HELPME();
 			Quit();
 			break;
 
@@ -114,81 +112,93 @@ while ($arg = array_shift($argv)) {
 	}
 }
 
+//The clock is ticking.
 $start = microtime(true);
 
-if ($inputFile) {
-	$handle = fopen($inputFile, 'r'); //Open the file for reading.
+if ($inputFilePath) {
+	$handle = fopen($inputFilePath, 'r'); //Open the file for reading.
 
-	if ($groupBy) {
+	if($handle) {
+		if ($groupBy) {
 
-		$lineNumber = 0;
-		if ($fileHasHeaderRow) {
-			$lineNumber++;
-			$columnString = fgets($handle);
-		}
+			$lineNumber = 0; //Used to provide feedback if a bad row is encountered.
 
-		if ($columnString) {
-			$gt = new GT($columnString, $ignoreBadRows);
-
-			while (($line = fgets($handle)) !== false) {
+			//Record the first line if we're expecting a header row.
+			if ($fileHasHeaderRow) {
 				$lineNumber++;
-				$gt->Add($line, $lineNumber);
+				$columnString = fgets($handle);
 			}
 
-			if ($gt->ColumnCount) {
-				$result = $gt->GroupCount($groupBy);
+			if ($columnString) {
+				$gt = new GT($columnString, $ignoreBadRows);
 
-				if(!empty($result)) {
+				//Read all remaining lines onto the sorting object
+				while (($line = fgets($handle)) !== false) {
+					$lineNumber++;
+					$gt->Add($line, $lineNumber);
+				}
 
-					$output = "";
 
-					switch ($outputFormat) {
-						case "text":
-							$array[] = array($groupBy, 'count');
-							foreach ($result as $key => $count) $array[] = array($key, $count);
-							$output = MonospaceColumns($array);
-							break;
+				if ($gt->RecordCount()) {
+					$result = $gt->GroupCount($groupBy); //DO IT!
 
-						case "csv":
-							$array[] = array($groupBy, 'count');
-							foreach ($result as $key => $count) $array[] = array($key, $count);
-							$output = ArrayToCSV($array);
-							break;
+					if (!empty($result)) {
 
-						case "json":
-							$json = array();
-							foreach ($result as $key => $count) $json[] = array($groupBy => $key, 'count' => $count);
-							$output = json_encode($json);
-							break;
-					}
+						$output = "";
 
-					if ($outputFile) {
-						file_put_contents($outputFile, $output);
-					}
-					else echo "\r\n$output\r\n";
+						//Arrange for output
+						switch ($outputFormat) {
+							case "text":
+								$array[] = array($groupBy, 'count');
+								foreach ($result as $key => $count) $array[] = array($key, $count);
+								$output = MonospaceColumns($array);
+								break;
 
-					$errorCount = $gt->ErrorCount();
+							case "csv":
+								$array[] = array($groupBy, 'count');
+								foreach ($result as $key => $count) $array[] = array($key, $count);
+								$output = ArrayToCSV($array);
+								break;
 
-					echo "\r\nProcessed ".number_format($lineNumber)." records in "
-						.number_format(microtime(true) - $start, 2)." seconds.";
+							case "json":
+								$json = array();
+								foreach ($result as $key => $count) $json[] = array($groupBy => $key, 'count' => $count);
+								$output = json_encode($json);
+								break;
+						}
 
-					if ($errorCount) {
-						echo "\r\nEncountered ".$errorCount." bad line".($errorCount == 1 ? '' : 's')
-							.". List line numbers? y/N: ";
-						$handle = fopen("php://stdin", "r");
-						$line = strtolower(trim(fgets($handle)));
-						if ($line == 'y') {
-							foreach ($gt->Errors as $error) echo "$error\r\n";
+						//Handle desired output method
+						if ($outputFilePath) {
+							file_put_contents($outputFilePath, $output);
+						}
+						else echo "\r\n$output\r\n";
+
+						$errorCount = $gt->ErrorCount();
+
+						//How long did it take?
+						echo "\r\nProcessed ".number_format($lineNumber)." records in "
+							.number_format(microtime(true) - $start, 2)." seconds.";
+
+						//Did anything go wrong?
+						if ($errorCount) {
+							echo "\r\nEncountered ".$errorCount." bad line".($errorCount == 1 ? '' : 's')
+								.". List line numbers? y/N: ";
+							$handle = fopen("php://stdin", "r");
+							$line = strtolower(trim(fgets($handle)));
+							if ($line == 'y') {
+								foreach ($gt->Errors as $error) echo "$error\r\n";
+							}
 						}
 					}
+					else echo "Empty result.";
 				}
-				else echo "Empty result.";
+				else echo "No rows in file.";
 			}
-			else echo "No rows in file.";
+			else echo "Empty file, or bad column designation.";
 		}
-		else echo "Empty file.";
+		else echo "Please specify a column by which to group your tally.";
 	}
-	else echo "Please specify a column by which to group your tally.";
+	else echo "Could not open $inputFilePath for writing.";
 }
 else echo "No input file specified.";
 
@@ -213,8 +223,8 @@ class GT {
 
 	/**
 	 * GT constructor.
-	 * @param string $columnString
-	 * @param bool $ignoreBadRows
+	 * @param string $columnString  A CSV-formatted string indicating column titles
+	 * @param bool $ignoreBadRows  Whether or not to break on a bad row
 	 */
 	public function __construct($columnString, $ignoreBadRows = false) {
 		$columns = ($columnString && is_string($columnString)) ? str_getcsv($columnString) : false;
@@ -230,8 +240,8 @@ class GT {
 	}
 
 	/**
-	 * @param string $rowString
-	 * @param string $lineNumber
+	 * @param string $rowString  A line from a CSV file
+	 * @param string $lineNumber  For reporting bad rows
 	 */
 	public function Add($rowString, $lineNumber = 'unknown') {
 		$rowString = trim($rowString);
@@ -250,6 +260,7 @@ class GT {
 	}
 
 	/**
+	 * Do the thing.  Generate array of counts, grouped by the requested column
 	 * @param $groupBy
 	 * @return array|bool
 	 */
@@ -261,6 +272,7 @@ class GT {
 					//The Magic
 					if (isset($result[$item[$columnKey]])) $result[$item[$columnKey]]++;
 					else $result[$item[$columnKey]] = 1;
+					//End The Magic
 				}
 			}
 			ksort($result);
@@ -269,16 +281,22 @@ class GT {
 		else {
 			echo "Column $groupBy not found.";
 			Quit();
+
+			//My IDE is complaining that not all code paths return values.
+			//So here's an unreachable one.  You're welcome, PHPStorm.
+			return false;
 		}
 	}
 
-	/**
-	 * @return int
-	 */
+	/** @return int */
+	function RecordCount() { return count($this->list); }
+
+	/** @return int */
 	function ErrorCount() { return count($this->Errors); }
 }
 
 /**
+ * Draws a delightfully spaced text table
  * @param array[] $table
  * @return bool|string
  */
@@ -310,6 +328,7 @@ function MonospaceColumns($table) {
 }
 
 /**
+ * Converts a jagged 2 dimensional array into a CSV
  * @param array[] $array
  * @param string $fieldDelimiter
  * @param string $textDelimiter
@@ -325,6 +344,7 @@ function ArrayToCSV($array, $fieldDelimiter = ",", $textDelimiter = "\"", $nl = 
 }
 
 /**
+ * Converts an array of strings into a single CSV line
  * @param array $array
  * @param string $fieldDelimiter
  * @param string $textDelimiter
@@ -344,4 +364,23 @@ function ArrayToCSVLine($array, $fieldDelimiter = ",", $textDelimiter = "\"") {
 function Quit() {
 	echo "\r\n\r\n";
 	exit;
+}
+
+function HELPME() {
+	echo "\r\nUsage: php gt.php [OPTIONS] -i INPUTFILE -g GROUPBY\r\n";
+	echo "  REQUIRED:\r\n";
+	echo "      -i INPUTFILE        Path to the input file\r\n";
+	echo "  OPTIONAL:\r\n";
+	echo "      -c COLUMNS          Comma separated columns\r\n";
+	echo "                              (Default \"user ID, user age\")\r\n";
+	echo "      -g GROUPBY          Title of the 'group by' column\r\n";
+	echo "                              (Default \"user age\")\r\n";
+	echo "      -o                  Path to the output file\r\n";
+	echo "                              (Default will print to stdout)\r\n";
+	echo "      -h                  Header of CSV contains column names\r\n";
+	echo "                               (Default off)\r\n";
+	echo "      -b                  Ignore bad lines in the CSV\r\n";
+	echo "                               (Default off)\r\n";
+	echo "      -f text|csv|json    Output format\r\n";
+	echo "                               (Default csv)\r\n";
 }
